@@ -1,6 +1,6 @@
 {
 	"name": "sidebar-fold",
-	"version": "1.2.0",
+	"version": "1.2.1",
 	"description": "Hide Obsidian sidebars when a note opens",
 	"main": "main.js",
 	"scripts": {

@@ -1,11 +1,11 @@
 {
 	"id": "sidebar-fold",
 	"name": "Sidebar Fold",
-	"version": "1.2.0",
+	"version": "1.2.1",
 	"minAppVersion": "1.6.6",
 	"description": "Hide the sidebars when you open a note or click into it, remember their width, and pin them open when you need them.",
 	"author": "Jeff Bouganim",
-	"authorUrl": "https://github.com/bouganim-labs",
+	"authorUrl": "https://jeff.bouganim.ca",
 	"fundingUrl": "https://buymeacoffee.com/bouganim",
 	"isDesktopOnly": true
 }
