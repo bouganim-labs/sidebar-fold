@@ -2,7 +2,7 @@ import {
 	App,
 	Plugin,
 	PluginSettingTab,
-	Setting,
+	SettingDefinitionItem,
 	TFile,
 	WorkspaceLeaf,
 	WorkspaceParent,
@@ -353,6 +353,8 @@ export default class SidebarFoldPlugin extends Plugin {
 	}
 }
 
+type SettingKey = Extract<keyof SidebarFoldSettings, string>;
+
 class SidebarFoldSettingTab extends PluginSettingTab {
 	plugin: SidebarFoldPlugin;
 
@@ -361,173 +363,157 @@ class SidebarFoldSettingTab extends PluginSettingTab {
 		this.plugin = plugin;
 	}
 
-	display(): void {
-		const { containerEl } = this;
-		const s = this.plugin.settings;
-		const save = () => this.plugin.saveSettings();
-		containerEl.empty();
-
-		const credit = containerEl.createDiv({ cls: "sidebar-fold-credit" });
-		credit.createEl("strong", { text: `Sidebar Fold ${this.plugin.manifest.version}` });
-		credit.createSpan({ text: ` by ${AUTHOR}. ` });
-		credit.createEl("a", { text: "Source on GitHub", href: REPO_URL });
-		credit.createSpan({ text: " · " });
-		credit.createEl("a", { text: "Buy me a coffee", href: COFFEE_URL });
-
-		new Setting(containerEl).setName("Hiding").setHeading();
-
-		new Setting(containerEl)
-			.setName("Hide when")
-			.setDesc(
-				"Pick a note hides the sidebar the moment a note opens. Click into the note waits until you click in the note itself, so you can keep browsing first.",
-			)
-			.addDropdown((d) =>
-				d
-					.addOption("open", "I pick a note")
-					.addOption("click", "I click into the note")
-					.addOption("both", "Either one")
-					.setValue(s.hideWhen)
-					.onChange(async (v) => {
-						s.hideWhen = v as HideWhen;
-						await save();
-						this.display();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Hide the left sidebar")
-			.setDesc("File explorer, search and other left-side panels.")
-			.addToggle((t) =>
-				t.setValue(s.hideLeft).onChange(async (v) => {
-					s.hideLeft = v;
-					await save();
-				}),
-			);
-
-		new Setting(containerEl)
-			.setName("Hide the right sidebar")
-			.setDesc("Outline, backlinks, properties.")
-			.addToggle((t) =>
-				t.setValue(s.hideRight).onChange(async (v) => {
-					s.hideRight = v;
-					await save();
-				}),
-			);
-
-		new Setting(containerEl)
-			.setName("Skip when the editor is split")
-			.setDesc("Leave the sidebars alone while two or more notes are side by side.")
-			.addToggle((t) =>
-				t.setValue(s.skipWhenSplit).onChange(async (v) => {
-					s.skipWhenSplit = v;
-					await save();
-				}),
-			);
-
-		if (s.hideWhen !== "click") {
-			new Setting(containerEl).setName("When you pick a note").setHeading();
-
-			new Setting(containerEl)
-				.setName("Which opens count")
-				.setDesc(
-					"Any open includes quick switcher, search, links and the daily note. Sidebar only reacts to clicks in the left sidebar, such as your file explorer.",
-				)
-				.addDropdown((d) =>
-					d
-						.addOption("any", "Any way a note opens")
-						.addOption("sidebar", "Only from the left sidebar")
-						.setValue(s.openTrigger)
-						.onChange(async (v) => {
-							s.openTrigger = v as OpenTrigger;
-							await save();
-						}),
-				);
-
-			new Setting(containerEl)
-				.setName("Keep open while browsing with the keyboard")
-				.setDesc(
-					"Arrow keys in the file list open each note as you pass it. Leave this on so the sidebar stays while you browse.",
-				)
-				.addToggle((t) =>
-					t.setValue(s.keepOpenWhileKeyboardBrowsing).onChange(async (v) => {
-						s.keepOpenWhileKeyboardBrowsing = v;
-						await save();
-					}),
-				);
-
-			new Setting(containerEl)
-				.setName("Delay")
-				.setDesc("Wait this long (milliseconds) before hiding. Set to 0 to hide right away.")
-				.addSlider((sl) =>
-					sl
-						.setLimits(0, 1000, 50)
-						.setValue(s.delayMs)
-						.onChange(async (v) => {
-							s.delayMs = v;
-							await save();
-						}),
-				);
+	// Writes go through the plugin so the status bar pin and any pending hide
+	// stay in step, then visible() predicates are re-checked for dependent rows.
+	async setControlValue(key: string, value: unknown): Promise<void> {
+		if (key === "pinned") {
+			await this.plugin.setPinned(value === true);
+		} else {
+			(this.plugin.settings as unknown as Record<string, unknown>)[key] = value;
+			await this.plugin.saveSettings();
 		}
+		this.refreshDomState();
+	}
 
-		new Setting(containerEl).setName("Opening again").setHeading();
+	getSettingDefinitions(): SettingDefinitionItem<SettingKey>[] {
+		const s = () => this.plugin.settings;
 
-		new Setting(containerEl)
-			.setName("Open by touching the left edge")
-			.setDesc("Push the mouse against the left edge of the window to slide the left sidebar back out.")
-			.addToggle((t) =>
-				t.setValue(s.hoverReveal).onChange(async (v) => {
-					s.hoverReveal = v;
-					await save();
-					this.display();
-				}),
-			);
+		const credit = createFragment((f) => {
+			f.appendText(`By ${AUTHOR}. `);
+			f.createEl("a", { text: "Source on GitHub", href: REPO_URL });
+			f.appendText(" · ");
+			f.createEl("a", { text: "Buy me a coffee", href: COFFEE_URL });
+		});
 
-		if (s.hoverReveal) {
-			new Setting(containerEl)
-				.setName("Edge delay")
-				.setDesc("How long (milliseconds) the mouse rests at the edge before the sidebar opens.")
-				.addSlider((sl) =>
-					sl
-						.setLimits(0, 1000, 50)
-						.setValue(s.hoverDelayMs)
-						.onChange(async (v) => {
-							s.hoverDelayMs = v;
-							await save();
-						}),
-				);
-
-			new Setting(containerEl)
-				.setName("Fold again when the mouse moves back")
-				.setDesc("A sidebar opened from the edge folds once the mouse rests over the note.")
-				.addToggle((t) =>
-					t.setValue(s.hoverAutoClose).onChange(async (v) => {
-						s.hoverAutoClose = v;
-						await save();
-					}),
-				);
-		}
-
-		new Setting(containerEl).setName("Pin").setHeading();
-
-		new Setting(containerEl)
-			.setName("Pin sidebars open")
-			.setDesc(
-				"Pauses all auto-hiding, for filing or drag and drop. Also available as a command you can give a hotkey.",
-			)
-			.addToggle((t) =>
-				t.setValue(s.pinned).onChange(async (v) => {
-					await this.plugin.setPinned(v);
-				}),
-			);
-
-		new Setting(containerEl)
-			.setName("Show pin in the status bar")
-			.setDesc("A pin icon in the bottom bar. Click it to pin or unpin.")
-			.addToggle((t) =>
-				t.setValue(s.showStatusBarPin).onChange(async (v) => {
-					s.showStatusBarPin = v;
-					await save();
-				}),
-			);
+		return [
+			{
+				type: "group",
+				cls: "sidebar-fold-credit",
+				items: [
+					{
+						name: `Sidebar Fold ${this.plugin.manifest.version}`,
+						desc: credit,
+						searchable: false,
+					},
+				],
+			},
+			{
+				type: "group",
+				heading: "Hiding",
+				items: [
+					{
+						name: "Hide when",
+						desc: "Pick a note hides the sidebar the moment a note opens. Click into the note waits until you click in the note itself, so you can keep browsing first.",
+						control: {
+							type: "dropdown",
+							key: "hideWhen",
+							options: {
+								open: "I pick a note",
+								click: "I click into the note",
+								both: "Either one",
+							},
+						},
+					},
+					{
+						name: "Hide the left sidebar",
+						desc: "File explorer, search and other left-side panels.",
+						control: { type: "toggle", key: "hideLeft" },
+					},
+					{
+						name: "Hide the right sidebar",
+						desc: "Outline, backlinks, properties.",
+						control: { type: "toggle", key: "hideRight" },
+					},
+					{
+						name: "Skip when the editor is split",
+						desc: "Leave the sidebars alone while two or more notes are side by side.",
+						control: { type: "toggle", key: "skipWhenSplit" },
+					},
+				],
+			},
+			{
+				type: "group",
+				heading: "When you pick a note",
+				visible: () => s().hideWhen !== "click",
+				items: [
+					{
+						name: "Which opens count",
+						desc: "Any open includes quick switcher, search, links and the daily note. Sidebar only reacts to clicks in the left sidebar, such as your file explorer.",
+						control: {
+							type: "dropdown",
+							key: "openTrigger",
+							options: {
+								any: "Any way a note opens",
+								sidebar: "Only from the left sidebar",
+							},
+						},
+					},
+					{
+						name: "Keep open while browsing with the keyboard",
+						desc: "Arrow keys in the file list open each note as you pass it. Leave this on so the sidebar stays while you browse.",
+						control: { type: "toggle", key: "keepOpenWhileKeyboardBrowsing" },
+					},
+					{
+						name: "Delay",
+						desc: "Wait this long before hiding. Set to 0 to hide right away.",
+						control: {
+							type: "slider",
+							key: "delayMs",
+							min: 0,
+							max: 1000,
+							step: 50,
+							displayFormat: (v) => `${v} ms`,
+						},
+					},
+				],
+			},
+			{
+				type: "group",
+				heading: "Opening again",
+				items: [
+					{
+						name: "Open by touching the left edge",
+						desc: "Push the mouse against the left edge of the window to slide the left sidebar back out.",
+						aliases: ["hover", "reveal", "peek"],
+						control: { type: "toggle", key: "hoverReveal" },
+					},
+					{
+						name: "Edge delay",
+						desc: "How long the mouse rests at the edge before the sidebar opens.",
+						visible: () => s().hoverReveal,
+						control: {
+							type: "slider",
+							key: "hoverDelayMs",
+							min: 0,
+							max: 1000,
+							step: 50,
+							displayFormat: (v) => `${v} ms`,
+						},
+					},
+					{
+						name: "Fold again when the mouse moves back",
+						desc: "A sidebar opened from the edge folds once the mouse rests over the note.",
+						visible: () => s().hoverReveal,
+						control: { type: "toggle", key: "hoverAutoClose" },
+					},
+				],
+			},
+			{
+				type: "group",
+				heading: "Pin",
+				items: [
+					{
+						name: "Pin sidebars open",
+						desc: "Pauses all auto-hiding, for filing or drag and drop. Also available as a command you can give a hotkey.",
+						control: { type: "toggle", key: "pinned" },
+					},
+					{
+						name: "Show pin in the status bar",
+						desc: "A pin icon in the bottom bar. Click it to pin or unpin.",
+						control: { type: "toggle", key: "showStatusBarPin" },
+					},
+				],
+			},
+		];
 	}
 }
