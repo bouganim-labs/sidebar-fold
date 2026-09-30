@@ -10,12 +10,10 @@ import {
 	setIcon,
 } from "obsidian";
 
-// Shown at the top of the settings page so it's obvious this one is ours.
-const BUILT_BY = {
-	who: "Jeff Bouganim, with Sophia (Claude Code)",
-	when: "September 2026",
-	source: "~/GitHub/sidebar-fold",
-};
+// Credit block at the top of the settings page.
+const AUTHOR = "Jeff Bouganim";
+const REPO_URL = "https://github.com/bouganim-labs/sidebar-fold";
+const COFFEE_URL = "https://buymeacoffee.com/bouganim";
 
 type OpenTrigger = "any" | "sidebar";
 type HideWhen = "open" | "click" | "both";
@@ -28,6 +26,9 @@ interface SidebarFoldSettings {
 	skipWhenSplit: boolean;
 	keepOpenWhileKeyboardBrowsing: boolean;
 	delayMs: number;
+	hoverReveal: boolean;
+	hoverDelayMs: number;
+	hoverAutoClose: boolean;
 	showStatusBarPin: boolean;
 	pinned: boolean;
 	// Last width of each sidebar before we folded it, restored when it reopens.
@@ -43,6 +44,9 @@ const DEFAULT_SETTINGS: SidebarFoldSettings = {
 	skipWhenSplit: true,
 	keepOpenWhileKeyboardBrowsing: true,
 	delayMs: 0,
+	hoverReveal: true,
+	hoverDelayMs: 300,
+	hoverAutoClose: true,
 	showStatusBarPin: true,
 	pinned: false,
 	leftWidth: null,
@@ -56,6 +60,11 @@ const RETIRED_KEYS = [
 	"hideLeftOnEditorClick",
 	"hideRightOnEditorClick",
 ];
+
+// How close to the left edge of the window (px) the mouse must be to reveal the sidebar.
+const HOVER_EDGE_PX = 8;
+// How long the mouse must stay over the note before a hover-opened sidebar folds again.
+const HOVER_CLOSE_MS = 400;
 
 // How recent the last click/keypress must be to count as the cause of a note opening.
 const INPUT_WINDOW_MS = 1500;
@@ -99,6 +108,10 @@ export default class SidebarFoldPlugin extends Plugin {
 	private lastInput: LastInput | null = null;
 	private statusBarEl: HTMLElement | null = null;
 	private pendingTimer: number | null = null;
+	private hoverOpenTimer: number | null = null;
+	private hoverCloseTimer: number | null = null;
+	// True while the left sidebar is open because the mouse touched the edge.
+	private peeking = false;
 
 	async onload() {
 		await this.loadSettings();
@@ -129,6 +142,7 @@ export default class SidebarFoldPlugin extends Plugin {
 				this.app.workspace.on("file-open", (file) => this.onFileOpen(file)),
 			);
 			this.registerDomEvent(document, "click", (evt) => this.onDocumentClick(evt));
+			this.registerDomEvent(document, "mousemove", (evt) => this.onMouseMove(evt));
 			this.watchReopen("left");
 			this.watchReopen("right");
 		});
@@ -136,10 +150,12 @@ export default class SidebarFoldPlugin extends Plugin {
 
 	onunload() {
 		this.clearPending();
+		this.clearHoverOpen();
+		this.clearHoverClose();
 	}
 
 	async loadSettings() {
-		const saved = (await this.loadData()) ?? {};
+		const saved = ((await this.loadData()) ?? {}) as Record<string, unknown>;
 		for (const key of RETIRED_KEYS) delete saved[key];
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
 	}
@@ -258,7 +274,60 @@ export default class SidebarFoldPlugin extends Plugin {
 		};
 		if (left) collapse("left");
 		if (right) collapse("right");
-		if (widthChanged) this.saveSettings();
+		if (widthChanged) void this.saveSettings();
+	}
+
+	// Mouse at the left edge opens a folded left sidebar; moving back over the
+	// note folds it again if it was opened this way.
+	private onMouseMove(evt: MouseEvent) {
+		const s = this.settings;
+		const left = this.app.workspace.leftSplit;
+
+		if (s.hoverReveal && left.collapsed && evt.clientX <= HOVER_EDGE_PX) {
+			if (this.hoverOpenTimer === null) {
+				this.hoverOpenTimer = window.setTimeout(() => {
+					this.hoverOpenTimer = null;
+					if (!left.collapsed) return;
+					left.expand();
+					this.peeking = true;
+				}, s.hoverDelayMs);
+			}
+		} else {
+			this.clearHoverOpen();
+		}
+
+		if (!this.peeking) return;
+		if (left.collapsed) {
+			this.peeking = false;
+			this.clearHoverClose();
+			return;
+		}
+		if (!s.hoverAutoClose || s.pinned) return;
+		const rootEl = elOf(this.app.workspace.rootSplit);
+		const overNote = !!rootEl && evt.target instanceof Node && rootEl.contains(evt.target);
+		if (!overNote) {
+			this.clearHoverClose();
+		} else if (this.hoverCloseTimer === null) {
+			this.hoverCloseTimer = window.setTimeout(() => {
+				this.hoverCloseTimer = null;
+				this.peeking = false;
+				this.fold(true, false);
+			}, HOVER_CLOSE_MS);
+		}
+	}
+
+	private clearHoverOpen() {
+		if (this.hoverOpenTimer !== null) {
+			window.clearTimeout(this.hoverOpenTimer);
+			this.hoverOpenTimer = null;
+		}
+	}
+
+	private clearHoverClose() {
+		if (this.hoverCloseTimer !== null) {
+			window.clearTimeout(this.hoverCloseTimer);
+			this.hoverCloseTimer = null;
+		}
 	}
 
 	private dock(side: "left" | "right"): WorkspaceSidedock {
@@ -299,11 +368,11 @@ class SidebarFoldSettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		const credit = containerEl.createDiv({ cls: "sidebar-fold-credit" });
-		credit.createEl("strong", { text: "Built in-house" });
-		credit.createEl("div", {
-			text: `By ${BUILT_BY.who}, ${BUILT_BY.when}. Version ${this.plugin.manifest.version}.`,
-		});
-		credit.createEl("div", { text: `Source: ${BUILT_BY.source}` });
+		credit.createEl("strong", { text: `Sidebar Fold ${this.plugin.manifest.version}` });
+		credit.createSpan({ text: ` by ${AUTHOR}. ` });
+		credit.createEl("a", { text: "Source on GitHub", href: REPO_URL });
+		credit.createSpan({ text: " · " });
+		credit.createEl("a", { text: "Buy me a coffee", href: COFFEE_URL });
 
 		new Setting(containerEl).setName("Hiding").setHeading();
 
@@ -327,7 +396,7 @@ class SidebarFoldSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Hide the left sidebar")
-			.setDesc("Notebook Navigator, files, search.")
+			.setDesc("File explorer, search and other left-side panels.")
 			.addToggle((t) =>
 				t.setValue(s.hideLeft).onChange(async (v) => {
 					s.hideLeft = v;
@@ -361,7 +430,7 @@ class SidebarFoldSettingTab extends PluginSettingTab {
 			new Setting(containerEl)
 				.setName("Which opens count")
 				.setDesc(
-					"Any open includes quick switcher, search, links and the daily note. Sidebar only reacts to clicks in the left sidebar, such as Notebook Navigator.",
+					"Any open includes quick switcher, search, links and the daily note. Sidebar only reacts to clicks in the left sidebar, such as your file explorer.",
 				)
 				.addDropdown((d) =>
 					d
@@ -388,16 +457,53 @@ class SidebarFoldSettingTab extends PluginSettingTab {
 
 			new Setting(containerEl)
 				.setName("Delay")
-				.setDesc("Wait this long (milliseconds) before hiding. 0 hides right away.")
+				.setDesc("Wait this long (milliseconds) before hiding. Set to 0 to hide right away.")
 				.addSlider((sl) =>
 					sl
 						.setLimits(0, 1000, 50)
 						.setValue(s.delayMs)
-						.setDynamicTooltip()
 						.onChange(async (v) => {
 							s.delayMs = v;
 							await save();
 						}),
+				);
+		}
+
+		new Setting(containerEl).setName("Opening again").setHeading();
+
+		new Setting(containerEl)
+			.setName("Open by touching the left edge")
+			.setDesc("Push the mouse against the left edge of the window to slide the left sidebar back out.")
+			.addToggle((t) =>
+				t.setValue(s.hoverReveal).onChange(async (v) => {
+					s.hoverReveal = v;
+					await save();
+					this.display();
+				}),
+			);
+
+		if (s.hoverReveal) {
+			new Setting(containerEl)
+				.setName("Edge delay")
+				.setDesc("How long (milliseconds) the mouse rests at the edge before the sidebar opens.")
+				.addSlider((sl) =>
+					sl
+						.setLimits(0, 1000, 50)
+						.setValue(s.hoverDelayMs)
+						.onChange(async (v) => {
+							s.hoverDelayMs = v;
+							await save();
+						}),
+				);
+
+			new Setting(containerEl)
+				.setName("Fold again when the mouse moves back")
+				.setDesc("A sidebar opened from the edge folds once the mouse rests over the note.")
+				.addToggle((t) =>
+					t.setValue(s.hoverAutoClose).onChange(async (v) => {
+						s.hoverAutoClose = v;
+						await save();
+					}),
 				);
 		}
 
