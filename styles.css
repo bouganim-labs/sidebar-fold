@@ -1,0 +1,18 @@
+.sidebar-fold-credit {
+	padding: 10px 14px;
+	margin-bottom: 18px;
+	border-left: 3px solid var(--interactive-accent);
+	border-radius: var(--radius-s);
+	background: var(--background-secondary);
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	line-height: 1.5;
+}
+
+.sidebar-fold-credit strong {
+	color: var(--text-normal);
+}
+
+.sidebar-fold-pin.is-pinned {
+	color: var(--interactive-accent);
+}
